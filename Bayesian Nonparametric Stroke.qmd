@@ -1,0 +1,390 @@
+---
+title: "Bayesian Nonparametric Clustering of Stroke Risk"
+author: "Muna Farah"
+engine: python
+jupyter: python3
+format:
+  html:
+    toc: true
+    code-fold: true
+    embed-resources: true
+---
+
+## Introduction & Motivation 
+
+One of the main challenges in density estimation and clustering is determining the appropriate number of mixture components when the data structure is unknown. Traditional clustering methods like K-means require specifying the number of clusters, which can lead to underfitting (too few clusters) or overfitting (too many clusters) when chosen incorrectly. This is a fundamental problem when working with real-world datasets, where the underlying distribution is either complex or not visually obvious. The paper pyrichlet: A Python Package for Density Estimation and Clustering Using Gaussian Mixture Models (Selva et al., 2025) introduces a Bayesian nonparametric (BNP) approach built around Gaussian Mixture Models that is designed for density estimation and clustering. The Pyrichlet package addresses this limitation by implementing multiple mixture models, such as Dirichlet Process Mixture, which allow a potentially infinite number of components and infer the appropriate number of clusters from the data (Selva et al., 2025). 
+
+This challenge is particularly relevant for healthcare applications, where overlapping patterns in clinical markers like age, BMI, and glucose level, make it difficult to visually determine how many patient subgroups are present. Identifying meaningful patient clusters without prior assumptions about how many exist is critical for personalized treatment plans or risk stratification. This project applies the Dirichlet Process Mixture (DPM) model, as implemented in the Pyrichlet package, to the Stroke Prediction Dataset from Kaggle. The primary aim for this project is to perform Bayesian nonparametric density estimation on patient clinical features (age, BMI, glucose) using Gibbs sampling with slice sampling and to cluster patients without pre-specifying the number of groups while quantifying assignment uncertainty. This approach will be evaluated by testing whether inferred clusters show meaningful differences in stroke incidence and whether the results remain stable across different random initializations. 
+
+
+## Methods 
+
+The dataset I’m analyzing contains 5,110 patient records with 12 columns. For the analysis, I began with exploratory data examination by first calculating stroke rates across demographic categories (smoking status, gender, residence type). I found that males had slightly higher risk incidence than females, former smokers showed the highest risk, and urban residents experienced marginally more strokes than rural residents. I created visualizations including a heatmap of gender versus smoking status interactions and bar charts of residence based stroke rates to identify initial patterns. 
+
+Before moving further into preprocessing, I first verified that the class distribution would be preserved during model evaluation. After filling missing BMI values with the mean, I performed a stratified 3 fold cross-validation to verify that each fold maintained the original 4.9% stroke distribution. This stratification helps ensure that each cross-validation fold preserves the original class proportions. 
+
+For preprocessing, I implemented a scikit-learn pipeline that sequentially applied mean imputation for missing BMI values followed by standard scaling to normalize all features to zero mean and unit variance. I focused on three continuous features: age, bmi, and average glucose level for modeling. The data was then split 80/20 into training and test sets using stratified sampling to preserve class balance. Standardizing the data is important because Gaussian components in a Dirichlet Process Mixture assume features are on comparable scales. 
+
+After preprocessing, I applied Dirichlet Process Mixture (DPM) clustering to the standardized training data using the Pyrichlet library (Selva et al., 2025). This Bayesian nonparametric model uses a Dirichlet process prior that allows the number of mixture components to be determined automatically from the data. I initialized the model with 4 potential clusters for reproducibility. For posterior inference, I used the Gibbs sampling with slices algorithm as implemented in Pyrichlet. This algorithm introduces slice variables and performs sequential updates of allocation variables, and component parameters. The algorithm produced two outputs: maximum a posteriori (MAP) cluster assignments with associated uncertainty scores and posterior predictive density estimates across the feature space. To visualize the resulting patient subgroups, I created scatter plots for each feature pair: age and BMI, BMI and glucose, age and glucose, where point colors represent cluster assignments and point sizes scaled with uncertainty. Larger points indicated lower confidence in cluster assignment. I also generated density maps showing regions of high patient concentration, which revealed natural groupings in the data.
+I also examined stroke risk patterns within the identified clusters from the full training set model. I found that cluster 3 had the highest stroke rate (12.15%) while cluster 1 had no stroke cases. This suggests that clusters capture relevant patient subgroups with varying stroke risk. 
+
+To further evaluate cluster structure and model stability, I performed a multi-seed analysis. I re-fit the DPM model using three different random seeds (0, 9, 20) and three dataset subsets (1000, 2000, 5000 observations). For each combination of seed and subset size, I used corresponding initialization groups (4, 8, 10) to test sensitivity to initialization. This allowed me to test whether the number of clusters inferred by the Dirichlet process stayed consistent across different sample sizes and initializations. 
+
+In addition,  I used scikit-learn’s Mutual Information (MI) score, Adjusted Mutual Information (AMI) score, and Normalized Mutual Information (NMI) score as my metrics to quantify clustering stability. MI measures how much information two different clusterings share. Higher MI means the runs are discovering similar structures. However, MI is not normalized, so it tends to be larger when there are more clusters, and can exceed 1.0 when using natural logarithm, as scikit-learn does. MI scores ranged from 0.699 to 1.076 across runs, with higher values consistently occurring for runs with more clusters. This shows that MI tends to favor solutions with more clusters, which is why AMI and NMI make the comparison more fair. AMI corrects MI by accounting for similarity that could occur by chance. This makes it suited for evaluating DPM clusters because the number of clusters is not fixed. An AMI near 1.0 means two runs are almost identical in structure, while values closer to 0 mean the similarity is no better than random assignment. NMI rescales MI to a 0-1 range, which allows comparison across runs that output different numbers of clusters. NMI is useful since DPM sometimes produces more clusters for larger dataset sizes or different seeds, and NMI makes these comparisons fair. 
+
+For each subset size and initialization, I compared the resulting clustering against the clustering obtained from the first N observations of the full training set model (trained with 0 seed and init_group=4). For example, the 5000 sample runs produced higher AMI and NMI values (approaching 1.0 for seed 0). This means the model found a very consistent structure. Smaller subsets produced more variation, which makes sense because nonparametric posteriors become more stable as sample sizes increase (Selva et al., 2025). Runtime also increased: about 3-4 seconds for 1000 observations, 6-8 seconds for 2000 observations, and around 22-24 seconds for 5000 observations. This showcases Gibbs sampler stays manageable at this scale. 
+
+To better understand these patterns, I created visualizations to summarize how stability changed across seeds and subset sizes. The MI, AMI, and NMI comparison bar chart showcases the full performance for each  run. From this plot, it highlights that seed 0 consistently produces the most stable clustering behavior, especially at the 5000 sample level, where all metrics reach their highest values. I also generated a point plot that focused on AMI to show how stability changes with sample size. The AMI curve for seed 0 increases significantly from 1000 to 5000 samples, whereas seeds 9 and 20 remain relatively flat. This suggests that some initialization benefits more from additional data than others. Finally, I plotted the number of clusters detected across all runs. This highlights that seeds 9 and 20 tend to produce an excessively high number of clusters. These visualizations show how dataset size and random initialization shape Gibbs sampler behavior in the DPM model and reinforce that broader point that posterior cluster structures become more stable with more data. 
+
+## Implementation 
+
+### 1. Environment Setup and Data Loading
+
+We begin by importing the libraries for data manipulation, visualization, and Bayesian modeling. The Stroke Prediction dataset is loaded for initial inspection.
+
+```{python}
+# Data Manipulation and Visualization 
+import pandas as pd
+import numpy as np
+import time
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Preprcessing and Pipeline Tools 
+from sklearn.impute import SimpleImputer
+from sklearn.model_selection import StratifiedKFold
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+
+# Model Evaluation Metrics
+from sklearn.metrics import (
+    mutual_info_score, 
+    adjusted_mutual_info_score, 
+    normalized_mutual_info_score
+)
+
+# Bayesian Nonparametric Modeling (Selva et al., 2025)
+import pyrichlet
+
+# Load dataset
+df = pd.read_csv("healthcare-dataset-stroke-data.csv")
+df.head()
+```
+
+### 2. Exploratory Data Analysis (EDA)
+Before modeling, we examine the distribution of stroke incidence across key demographic markers. This provides a baseline understanding of risk factors within the study group. 
+```{python}
+# Stroke rates by categorical groups 
+gender_stroke = df.groupby("gender")["stroke"].agg(["mean", "count"])
+gender_stroke["mean"] = gender_stroke["mean"] * 100
+print(gender_stroke.round(2))
+
+smoking_stroke = df.groupby("smoking_status")["stroke"].agg(["mean", "count"])
+smoking_stroke["mean"] = smoking_stroke["mean"] * 100
+print(smoking_stroke.round(2))
+
+residence_stroke = df.groupby("Residence_type")["stroke"].agg(["mean", "count"])
+residence_stroke["mean"] = residence_stroke["mean"] * 100
+print(residence_stroke.round(2))
+
+```
+
+```{python}
+# Visualization: Gender vs Smoking Status Risk
+plt.figure(figsize=(10,6))
+gend_smoke = df.groupby(["gender", "smoking_status"])["stroke"].mean().unstack()
+sns.heatmap(gend_smoke, annot=True, fmt= ".2f", cmap="Reds")
+plt.title("Stroke Rate: Gender vs Smoking Status")
+
+plt.tight_layout()
+plt.show()
+
+```
+
+```{python}
+# Visualization: Residence Types vs Smoking Status Risk
+res_plot = df.groupby("Residence_type")["stroke"].mean() * 100
+sns.barplot(x=res_plot.index, y=res_plot.values, palette="BuGn", hue=res_plot.index)
+plt.title("Stroke Rates by Residence Types")
+plt.xlabel("Residence Types")
+plt.ylabel("Stroke Rates %")
+
+for i, (index, value) in enumerate(zip(res_plot.index, res_plot.values)):
+    plt.text(i, value, f'{value:.1f}%',
+             ha='center', va='bottom')
+
+plt.tight_layout()
+plt.show()
+```
+
+
+### 3. Data Preprocessing Pipeline
+
+To prepare the clinical markers for the DPM model, we implement an automated pipeline. This includes mean imputation for missing BMI values and standard scaling to ensure Gaussian components are evaluated on a comparable scale.
+
+```{python}
+features = ["age", "bmi", "avg_glucose_level"]
+
+imputer = SimpleImputer(strategy="mean")
+X_imputed = imputer.fit_transform(df[features]) 
+stroke_labels = df["stroke"].to_numpy()
+
+skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+
+print(f"Total samples: {len(X_imputed)}")
+print(f"Stroke cases: {stroke_labels.sum()} ({stroke_labels.sum()/len(stroke_labels) * 100:.1f}%)\n")
+
+for fold, (train_idx, test_idx) in enumerate(skf.split(X_imputed, stroke_labels)):
+    train_stroke = stroke_labels[train_idx].mean() * 100
+    test_stroke = stroke_labels[test_idx].mean() * 100
+    
+    print(f"Fold {fold + 1}:")
+    print(f"Train: {len(train_idx)} samples ({train_stroke:.1f}% stroke)")
+    print(f"Test: {len(test_idx)} samples ({test_stroke:.1f}% stroke)")
+```
+
+```{python}
+pipeline = Pipeline([ 
+    ("imputer", SimpleImputer(strategy="mean")),
+    ("scaler", StandardScaler())
+])
+
+X_raw = df[features].to_numpy()
+stroke_labels = df["stroke"].to_numpy()
+
+X_train_raw, X_test_raw, y_train, y_test = train_test_split(
+    X_raw, stroke_labels, test_size=0.2, random_state=42, stratify=stroke_labels
+)
+
+X_train = pipeline.fit_transform(X_train_raw)
+X_test = pipeline.transform(X_test_raw)
+```
+
+### 4. Dirichlet Process Mixture (DPM) Modeling
+
+We fit the DPM model using Gibbs sampling with a slice sampler. This approach allows the model to determine the optimal number of patient clusters ($k$) automatically.
+
+```{python}
+X = X_train 
+
+# Initializing with 4 groups as a starting point for the sampler
+rng = np.random.default_rng(0)
+mixture = pyrichlet.DirichletProcessMixture(rng=rng)
+mixture.fit_gibbs(X, init_groups=4)
+
+# Extracting MAP cluster assignments and uncertainty
+dens = mixture.gibbs_map_density(X)
+group, uncertainty = mixture.gibbs_map_cluster(X, full=True)
+order = np.argsort(-uncertainty)
+```
+
+### 5. Cluster and Density Visualizations
+
+The following plots visualize the identified patient subgroups. Point size represents assignment uncertainty, where larger points indicate lower model confidence.
+
+```{python}
+# Age vs BMI Cluster Map 
+plt.figure(figsize=(12,6))
+plt.scatter(X[:, 0], X[:, 1], c=group, s=1000 * (0.01 + uncertainty))
+plt.xlabel("age")
+plt.ylabel("bmi")
+plt.title("Dirichlet Process Mixture Clusters")
+
+plt.show()
+```
+
+```{python}
+# BMI vs Glucose Cluster Map 
+plt.figure(figsize=(12,6))
+plt.scatter(X[:, 1], X[:, 2], c=group, s=1000 * (0.01 + uncertainty))
+plt.xlabel("bmi")
+plt.ylabel("glucose")
+plt.title("Dirichlet Process Mixture Clusters")
+
+plt.show()
+```
+
+```{python}
+# Age vs Glucose Cluster Map
+plt.figure(figsize=(12,6))
+plt.scatter(X[:, 0], X[:, 2], c=group, s=1000 * (0.01 + uncertainty))
+plt.xlabel("age")
+plt.ylabel("glucose")
+plt.title("Dirichlet Process Mixture Clusters")
+
+plt.show()
+```
+
+```{python}
+# Age vs BMI Density Map
+plt.figure(figsize=(12,6))
+plt.scatter(X[:, 0], X[:, 1], c=dens, s=30, alpha=0.8)
+cbar = plt.colorbar()
+plt.clim(0, dens.max() / 1.5)
+cbar.set_label("density")
+
+plt.xlabel("age")
+plt.ylabel("bmi")
+plt.title("Dirichlet Process Mixture Density")
+
+plt.show()
+```
+
+```{python}
+# BMI vs Glucose Density Map
+plt.figure(figsize=(12,6))
+plt.scatter(X[:, 1], X[:, 2], c=dens, s=30, alpha=0.8)
+cbar = plt.colorbar()
+plt.clim(0, dens.max() / 1.5)
+cbar.set_label("density")
+
+plt.xlabel("bmi")
+plt.ylabel("glucose")
+plt.title("Dirichlet Process Mixture Density")
+
+plt.show()
+```
+
+```{python}
+# Age vs Glucose Density Map
+plt.figure(figsize=(12,6))
+plt.scatter(X[:, 0], X[:, 2], c=dens, s=30, alpha=0.8)
+cbar = plt.colorbar()
+plt.clim(0, dens.max() / 1.5)
+cbar.set_label("density")
+
+plt.xlabel("age")
+plt.ylabel("glucose")
+plt.title("Dirichlet Process Mixture Density")
+
+plt.show()
+```
+
+### 6. Cluster Outcome Analysis
+
+To validate the clinical utility of the inferred clusters, we examine the stroke incidence rate within each patient subgroup.
+```{python}
+# Stroke rates by cluster
+cluster_results = pd.DataFrame({
+    'cluster': group,
+    'stroke': y_train
+})
+
+print("Stroke rates by cluster:")
+stroke_rates = cluster_results.groupby("cluster")["stroke"].mean() * 100
+print(stroke_rates.round(2))
+```
+
+## Testing & Validation 
+
+### 1. Model Stability Analysis
+Because Bayesian nonparametric models can be sensitive to initialization and sample size, we evaluate the stability of the inferred structures using multiple random seeds and varying dataset subsets ($N$ = 1000, 2000, 5000).
+
+```{python}
+subset_size = [1000, 2000, 5000]
+seeds = [0, 9, 20]
+init_group_list = [4, 8, 10]
+
+cluster_runs = {}
+runtimes = {}
+
+for size in subset_size: 
+    X_subset = X[:size]
+
+    for s, init_g in zip(seeds, init_group_list):
+        rng = np.random.default_rng(s)
+        mixture = pyrichlet.DirichletProcessMixture(rng=rng)
+
+        start = time.time()
+        mixture.fit_gibbs(X_subset, init_groups=init_g)
+        end = time.time()
+
+        clusters, uncertainty = mixture.gibbs_map_cluster(X_subset, full=True)
+
+        cluster_runs[(size, f"seed_{s}")] = clusters
+        runtimes[(size, f"seed_{s}")] = end - start
+
+for (size, results), clusters in cluster_runs.items():
+    print(f"\nSubset =  {size}, {results}")
+    print(f"Clusters: {np.unique(clusters)}")
+    print(f"Runtime = {runtimes[(size, results)]:.2f} sec")
+    mi = mutual_info_score(group[:size], clusters[:size])
+    ami = adjusted_mutual_info_score(group[:size], clusters[:size])
+    nmi =normalized_mutual_info_score(group[:size], clusters[:size])
+    print(f"Mutual Info Score = {mi:.3f}")
+    print(f"Adjusted Mutual Info Score = {ami:.3f}")
+    print(f"Normalized Mutual Info Score = {nmi:.3f}")
+```
+
+### 2. Evaluation Metrics (MI, AMI, NMI)
+
+Adjusted Mutual Information (AMI) serves as our primary evaluation metric. Unlike standard measures, AMI corrects for chance agreement, which is essential for validating Dirichlet Process models where the number of clusters is inferred dynamically rather than fixed.
+```{python}
+palette = ["#F72585", "#7209B7", "#4CC9F0"]
+
+df_visual = pd.DataFrame({
+    "subset_size": [1000, 1000, 1000, 2000, 2000, 2000, 5000, 5000, 5000],
+    "seed": ["s0", "s9", "s20", "s0", "s9", "s20", "s0", "s9", "s20"],
+    "MI": [0.699, 0.884, 0.859, 0.775, 0.866, 0.811, 1.076, 0.878, 0.791],
+    "AMI": [0.583, 0.593, 0.602, 0.728, 0.558, 0.498, 1.000, 0.572, 0.490],
+    "NMI": [0.586, 0.596, 0.605, 0.729, 0.560, 0.500, 1.000, 0.573, 0.491]
+})
+
+df_melt = df_visual.melt(id_vars=['subset_size', 'seed'], 
+                            value_vars=['MI', 'AMI', 'NMI'],
+                            var_name='metric', value_name='score')
+
+
+df_melt['runs'] = df_melt['subset_size'].astype(str) + '-' + df_melt['seed']
+
+plt.figure(figsize=(12, 6))
+sns.barplot(data=df_melt, x='runs', y='score', hue='metric', palette=palette)
+plt.title('MI, AMI, NMI Comparison')
+plt.xlabel('Runs (Subset Size and Seed)')
+plt.ylabel('Score')
+plt.xticks(rotation=45, ha='right')
+
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
+
+### 3. Cluster Count Stability
+Finally, we visualize how the number of clusters ($k$) inferred by the model evolves as a function of sample size and random initialization.
+```{python}
+plt.figure(figsize=(12,6))
+
+df_clusters = {
+    "subset_size": [1000,1000,1000,2000,2000,2000,5000,5000,5000],
+    "clusters": [4,7,10,5,9,10,5,8,12]
+}
+
+df_clusters["seed"] = ["s0","s9","s20"] * 3
+
+plt.figure(figsize=(12,6))
+sns.barplot(data=df_clusters, x="subset_size", y="clusters", hue="seed", palette=palette)
+plt.title("Number of Clusters vs Subset Size")
+plt.ylabel("# of Clusters Detected")
+plt.xlabel("Subset Size")
+
+plt.show()
+```
+
+## Discussion 
+
+This project used Bayesian nonparametric clustering to sort the dataset into patient groups that showed different levels of stroke risk. Using the Dirichlet Process Mixture from the Pyrichlet package allowed the number of clusters to emerge from the data rather than being specified in advance. This approach found clinically meaningful patterns: one cluster had a 12.15% stroke rate while another had no stroke cases. This suggests that the model captured real differences in patient risk rather than uninformed groupings. The Gibbs sampling with slice sampling implementation worked as described in the Pyrichlet paper by producing both cluster assignments and uncertainty scores that helped identify less confident patient classifications. 
+
+The cluster and density visualizations highlighted several meaningful patterns about the patient population. Most patients concentrated in a central region of the feature space, with smaller outlier groups at the edges, especially those with high glucose or high BMI. 
+These outlier clusters correspond to the clinically distinct subgroups identified in my analysis. Assignment uncertainty was highest near the cluster boundaries, particularly where BMI and glucose ranges overlapped. This suggests that these clinical shifts aren’t visually obvious. Also, age contributed less to separating the clusters than BMI and glucose, which makes sense because metabolic markers separate the risk groups more clearly than age does in this dataset. Finally, the density plots showed two clear glucose groups: a dense normal glucose band and a smaller high glucose group, which the DPM picked up as separate components. 
+
+The stability analysis revealed important patterns about how the model behaves with different amounts of data. Large sample sizes (5000 observations) produced more consistent results, with AMI and NMI values approaching 1.0 for runs using the same seed and initialization as the main model. This practical observation supports the Pyrichlet authors’ focus on implementing scalable inference methods for growing dataset sizes. The visualizations highlight how different random initializations can lead to varying numbers of clusters, especially with smaller datasets.
+
+Even though the model produced useful insights, there were several limitations that should be addressed. The DPM model became unstable with the smaller subset (1000 and 2000 observations), where the AMI and NMI plots showed seeds 9 and 20 producing excessively high cluster counts. This suggests that part of the instability was due to the smaller subsets not providing enough data for the posterior to converge reliably. The multi-seed analysis also showed that the model is sensitive to initialization: seed 0 consistently produced stable, cleaner cluster structures, while seed 9 and 20 split the data more aggressively. This means that the cluster shapes depend heavily on where the sampler starts. Another limitation is using only age, BMI, and average glucose level. This excluded potentially important binary predictors like hypertension and heart disease, which could provide a more comprehensive view of stroke risk. If I were to expand to other features, I would strengthen my findings. In addition, I only used Gibbs Sampling with slice variables from Pyrichlet and didn’t compare it to other inference methods mentioned in the paper. Using other alternative approaches, such as variational inference, might produce more consistent or stable cluster structures. 
+
+For future work, I’d start by comparing the Pitman-Yor mixture (PYM), Geometric Process Mixture (GPM) to the Dirichlet Process Mixture (DPM) to see if it gives fewer clusters on the smaller subsets. I would also test whether the clusters I found work on new data by applying them to the 20% test set. If the clusters hold, they could be used to flag higher risk patients in a clinical setting. In addition, I would run a more controlled experiment where I test every seed with each initialization separately so I can see exactly how much each one influences the results. 
+
+## References 
+Selva, F., Fuentes-García, R., & Gil-Leyva, M. F. (2025). pyrichlet: A Python Package for Density Estimation and Clustering Using Gaussian Mixture Models. Journal of Statistical Software, 112(8). https://doi.org/10.18637/jss.v112.i08
+
+Dataset: https://www.kaggle.com/datasets/fedesoriano/stroke-prediction-dataset/data
