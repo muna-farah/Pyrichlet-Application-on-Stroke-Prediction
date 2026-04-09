@@ -19,6 +19,7 @@ This project applies the **Dirichlet Process Mixture (DPM)** model from the `pyr
 * Assignment uncertainty was highest at the boundaries of clinical markers, where patient profiles naturally overlap.
 
 ## Files
+* `Stroke Analysis.ipynb` – The Jupyter Notebook. 
 * `Bayesian Nonparametric Stroke.qmd` – The Quarto analysis file.
 * `Bayesian Nonparametric Stroke.html` – The rendered report.
 * `healthcare-dataset-stroke-data.csv` – The Kaggle dataset used for analysis.
