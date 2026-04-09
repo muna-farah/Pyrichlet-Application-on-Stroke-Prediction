@@ -1,4 +1,4 @@
-# Bayesian Nonparametric Clustering: Stroke Prediction
+# Bayesian Nonparametric Clustering - Stroke Prediction
 
 **Author:** Muna Farah  
 *Data Science Master's Candidate | B.S. in Public Health*
